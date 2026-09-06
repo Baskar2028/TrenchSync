@@ -1,0 +1,176 @@
+const { db, initDatabase } = require('./database');
+
+initDatabase();
+
+const agencies = [
+  { name: 'Salem Water Department', type: 'Water Utility' },
+  { name: 'City Telecom Division', type: 'Telecommunications' },
+  { name: 'Electricity Board', type: 'Power Utility' },
+  { name: 'Municipal Drainage Division', type: 'Drainage' },
+  { name: 'Road Development Department', type: 'Roads' },
+  { name: 'Sewerage Department', type: 'Sewerage' }
+];
+
+const insertAgency = db.prepare('INSERT INTO agencies (name, type) VALUES (?, ?)');
+
+db.exec('DELETE FROM coordination_proposals');
+db.exec('DELETE FROM coordination_scores');
+db.exec('DELETE FROM works');
+db.exec('DELETE FROM road_history');
+db.exec('DELETE FROM agencies');
+
+agencies.forEach(a => insertAgency.run(a.name, a.type));
+
+const agencyMap = {};
+db.prepare('SELECT * FROM agencies').all().forEach(a => { agencyMap[a.name] = a.id; });
+
+// Salem, Tamil Nadu approximate coordinates for demo roads
+const ROAD_COORDS = {
+  'MG Road': { lat: 11.6643, lng: 78.1460, segment: 'Central Business District' },
+  'Anna Salai': { lat: 11.6580, lng: 78.1520, segment: 'North Section' },
+  'Sarada College Road': { lat: 11.6700, lng: 78.1380, segment: 'West End' },
+  'Omalur Main Road': { lat: 11.6480, lng: 78.1600, segment: 'East Junction' },
+  'Trichy Main Road': { lat: 11.6550, lng: 78.1300, segment: 'South Stretch' },
+  'Five Roads Junction': { lat: 11.6620, lng: 78.1450, segment: 'Junction Area' },
+  'Gugai Road': { lat: 11.6750, lng: 78.1550, segment: 'North Extension' },
+  'Suramangalam Road': { lat: 11.6400, lng: 78.1400, segment: 'Residential Zone' },
+  'Kondalampatti Road': { lat: 11.6800, lng: 78.1650, segment: 'Industrial Area' },
+  'Fairlands Road': { lat: 11.6500, lng: 78.1480, segment: 'Market Area' },
+  'Hasthampatti Road': { lat: 11.6680, lng: 78.1580, segment: 'Hospital Zone' },
+  'Alagapuram Road': { lat: 11.6420, lng: 78.1550, segment: 'South Junction' },
+  'Junction Main Road': { lat: 11.6600, lng: 78.1420, segment: 'Central Junction' },
+  'Steel Plant Road': { lat: 11.6350, lng: 78.1350, segment: 'Industrial Belt' },
+  'Yercaud Road': { lat: 11.6850, lng: 78.1500, segment: 'Hill Approach' }
+};
+
+function offsetCoord(base, index) {
+  return {
+    lat: base.lat + (index * 0.0015) - 0.003,
+    lng: base.lng + (index * 0.002) - 0.004
+  };
+}
+
+const insertWork = db.prepare(`
+  INSERT INTO works (agency_id, work_type, road_name, location, start_date, end_date,
+    duration, priority, closure_type, description, status, lat, lng)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
+const works = [
+  // PRIMARY DEMO SCENARIO — MG Road
+  { agency: 'Salem Water Department', type: 'Water', road: 'MG Road', start: '2026-09-10', end: '2026-09-15', duration: 6, priority: 'High', closure: 'Partial', desc: 'Water pipeline replacement — MG Road central section', status: 'Planned', idx: 0 },
+  { agency: 'City Telecom Division', type: 'Telecom', road: 'MG Road', start: '2026-09-12', end: '2026-09-16', duration: 5, priority: 'Normal', closure: 'Partial', desc: 'Fiber optic cable laying along MG Road', status: 'Planned', idx: 1 },
+  { agency: 'Electricity Board', type: 'Electricity', road: 'MG Road', start: '2026-09-14', end: '2026-09-18', duration: 5, priority: 'Normal', closure: 'Partial', desc: 'Underground cable upgrade — MG Road corridor', status: 'Planned', idx: 2 },
+
+  // Anna Salai conflict
+  { agency: 'Sewerage Department', type: 'Sewerage', road: 'Anna Salai', start: '2026-09-08', end: '2026-09-14', duration: 7, priority: 'High', closure: 'Full', desc: 'Sewer line rehabilitation — Anna Salai north', status: 'Planned', idx: 0 },
+  { agency: 'City Telecom Division', type: 'Telecom', road: 'Anna Salai', start: '2026-09-10', end: '2026-09-16', duration: 7, priority: 'Normal', closure: 'Partial', desc: 'Telecom duct installation', status: 'Planned', idx: 1 },
+
+  // Five Roads Junction — multi project
+  { agency: 'Municipal Drainage Division', type: 'Drainage', road: 'Five Roads Junction', start: '2026-09-05', end: '2026-09-12', duration: 8, priority: 'High', closure: 'Partial', desc: 'Storm drain upgrade at Five Roads Junction', status: 'Planned', idx: 0 },
+  { agency: 'Road Development Department', type: 'Road Resurfacing', road: 'Five Roads Junction', start: '2026-09-08', end: '2026-09-15', duration: 8, priority: 'Normal', closure: 'Full', desc: 'Junction resurfacing and marking', status: 'Planned', idx: 1 },
+  { agency: 'Electricity Board', type: 'Electricity', road: 'Five Roads Junction', start: '2026-09-10', end: '2026-09-14', duration: 5, priority: 'Normal', closure: 'Partial', desc: 'Street light cable replacement', status: 'Planned', idx: 2 },
+
+  // Sarada College Road
+  { agency: 'Salem Water Department', type: 'Water', road: 'Sarada College Road', start: '2026-09-20', end: '2026-09-25', duration: 6, priority: 'Normal', closure: 'Partial', desc: 'Water main extension', status: 'Planned', idx: 0 },
+  { agency: 'Sewerage Department', type: 'Sewerage', road: 'Sarada College Road', start: '2026-09-22', end: '2026-09-28', duration: 7, priority: 'Normal', closure: 'Partial', desc: 'Sewer connection works', status: 'Planned', idx: 1 },
+
+  // Omalur Main Road
+  { agency: 'Electricity Board', type: 'Electricity', road: 'Omalur Main Road', start: '2026-09-01', end: '2026-09-07', duration: 7, priority: 'High', closure: 'Partial', desc: 'Power line undergrounding', status: 'Planned', idx: 0 },
+  { agency: 'City Telecom Division', type: 'Telecom', road: 'Omalur Main Road', start: '2026-09-03', end: '2026-09-09', duration: 7, priority: 'Normal', closure: 'None', desc: 'Overhead to underground telecom migration', status: 'Planned', idx: 1 },
+
+  // Trichy Main Road
+  { agency: 'Road Development Department', type: 'Road Resurfacing', road: 'Trichy Main Road', start: '2026-09-15', end: '2026-09-22', duration: 8, priority: 'Normal', closure: 'Full', desc: 'Full road resurfacing — south stretch', status: 'Planned', idx: 0 },
+  { agency: 'Municipal Drainage Division', type: 'Drainage', road: 'Trichy Main Road', start: '2026-09-17', end: '2026-09-24', duration: 8, priority: 'High', closure: 'Partial', desc: 'Side drain construction', status: 'Planned', idx: 1 },
+
+  // Gugai Road — standalone
+  { agency: 'Salem Water Department', type: 'Water', road: 'Gugai Road', start: '2026-10-01', end: '2026-10-05', duration: 5, priority: 'Low', closure: 'Partial', desc: 'Minor pipeline repair', status: 'Planned', idx: 0 },
+
+  // Suramangalam Road
+  { agency: 'Sewerage Department', type: 'Sewerage', road: 'Suramangalam Road', start: '2026-09-06', end: '2026-09-11', duration: 6, priority: 'Normal', closure: 'Partial', desc: 'Sewer manhole replacement', status: 'Planned', idx: 0 },
+  { agency: 'Electricity Board', type: 'Electricity', road: 'Suramangalam Road', start: '2026-09-08', end: '2026-09-13', duration: 6, priority: 'Normal', closure: 'Partial', desc: 'Transformer cable routing', status: 'Planned', idx: 1 },
+
+  // Kondalampatti Road
+  { agency: 'City Telecom Division', type: 'Telecom', road: 'Kondalampatti Road', start: '2026-09-12', end: '2026-09-18', duration: 7, priority: 'Normal', closure: 'None', desc: '5G infrastructure cabling', status: 'Planned', idx: 0 },
+  { agency: 'Municipal Drainage Division', type: 'Drainage', road: 'Kondalampatti Road', start: '2026-09-14', end: '2026-09-20', duration: 7, priority: 'High', closure: 'Partial', desc: 'Industrial drainage upgrade', status: 'Planned', idx: 1 },
+
+  // Fairlands Road
+  { agency: 'Road Development Department', type: 'Road Resurfacing', road: 'Fairlands Road', start: '2026-09-25', end: '2026-10-02', duration: 8, priority: 'Normal', closure: 'Full', desc: 'Market area road upgrade', status: 'Planned', idx: 0 },
+  { agency: 'Salem Water Department', type: 'Water', road: 'Fairlands Road', start: '2026-09-27', end: '2026-10-03', duration: 7, priority: 'Normal', closure: 'Partial', desc: 'Water connection for market vendors', status: 'Planned', idx: 1 },
+
+  // Hasthampatti Road
+  { agency: 'Electricity Board', type: 'Electricity', road: 'Hasthampatti Road', start: '2026-09-18', end: '2026-09-23', duration: 6, priority: 'High', closure: 'Partial', desc: 'Hospital zone power reliability upgrade', status: 'Planned', idx: 0 },
+
+  // Alagapuram Road
+  { agency: 'Sewerage Department', type: 'Sewerage', road: 'Alagapuram Road', start: '2026-09-11', end: '2026-09-17', duration: 7, priority: 'Normal', closure: 'Partial', desc: 'Sewer network expansion', status: 'Planned', idx: 0 },
+  { agency: 'City Telecom Division', type: 'Telecom', road: 'Alagapuram Road', start: '2026-09-13', end: '2026-09-19', duration: 7, priority: 'Normal', closure: 'None', desc: 'Broadband expansion', status: 'Planned', idx: 1 },
+
+  // Junction Main Road
+  { agency: 'Municipal Drainage Division', type: 'Drainage', road: 'Junction Main Road', start: '2026-09-04', end: '2026-09-10', duration: 7, priority: 'High', closure: 'Partial', desc: 'Central junction drainage', status: 'Planned', idx: 0 },
+  { agency: 'Road Development Department', type: 'Road Resurfacing', road: 'Junction Main Road', start: '2026-09-07', end: '2026-09-13', duration: 7, priority: 'Normal', closure: 'Full', desc: 'Junction road marking and resurfacing', status: 'Planned', idx: 1 },
+
+  // Steel Plant Road
+  { agency: 'Electricity Board', type: 'Electricity', road: 'Steel Plant Road', start: '2026-09-16', end: '2026-09-21', duration: 6, priority: 'High', closure: 'Partial', desc: 'Industrial power supply upgrade', status: 'Planned', idx: 0 },
+  { agency: 'Salem Water Department', type: 'Water', road: 'Steel Plant Road', start: '2026-09-18', end: '2026-09-23', duration: 6, priority: 'Normal', closure: 'Partial', desc: 'Industrial water line', status: 'Planned', idx: 1 },
+
+  // Yercaud Road
+  { agency: 'Road Development Department', type: 'Road Resurfacing', road: 'Yercaud Road', start: '2026-09-09', end: '2026-09-16', duration: 8, priority: 'Normal', closure: 'Partial', desc: 'Hill approach road maintenance', status: 'Planned', idx: 0 },
+
+  // Coordinated example
+  { agency: 'Salem Water Department', type: 'Water', road: 'Gugai Road', start: '2026-08-01', end: '2026-08-06', duration: 6, priority: 'Normal', closure: 'Partial', desc: 'Previously coordinated water work', status: 'Coordinated', idx: 0 },
+  { agency: 'City Telecom Division', type: 'Telecom', road: 'Gugai Road', start: '2026-08-01', end: '2026-08-06', duration: 6, priority: 'Normal', closure: 'Partial', desc: 'Previously coordinated telecom work', status: 'Coordinated', idx: 1 },
+
+  // Emergency — should trigger hard constraint
+  { agency: 'Salem Water Department', type: 'Water', road: 'Fairlands Road', start: '2026-09-01', end: '2026-09-03', duration: 3, priority: 'Emergency', closure: 'Full', desc: 'Emergency burst pipe repair', status: 'Planned', idx: 2 },
+
+  // Additional works for volume
+  { agency: 'Municipal Drainage Division', type: 'Drainage', road: 'MG Road', start: '2026-10-05', end: '2026-10-10', duration: 6, priority: 'Normal', closure: 'Partial', desc: 'Post-coordination drainage check', status: 'Planned', idx: 3 },
+  { agency: 'Sewerage Department', type: 'Sewerage', road: 'Trichy Main Road', start: '2026-10-01', end: '2026-10-08', duration: 8, priority: 'Low', closure: 'Partial', desc: 'Follow-up sewer inspection', status: 'Planned', idx: 2 },
+  { agency: 'Electricity Board', type: 'Electricity', road: 'Anna Salai', start: '2026-10-02', end: '2026-10-07', duration: 6, priority: 'Normal', closure: 'Partial', desc: 'Secondary power line work', status: 'Planned', idx: 2 },
+  { agency: 'Road Development Department', type: 'Road Resurfacing', road: 'Omalur Main Road', start: '2026-09-20', end: '2026-09-27', duration: 8, priority: 'Normal', closure: 'Full', desc: 'Road resurfacing phase 2', status: 'Planned', idx: 2 },
+  { agency: 'Salem Water Department', type: 'Water', road: 'Hasthampatti Road', start: '2026-09-25', end: '2026-09-30', duration: 6, priority: 'Normal', closure: 'Partial', desc: 'Hospital water supply redundancy', status: 'Planned', idx: 1 },
+  { agency: 'City Telecom Division', type: 'Telecom', road: 'Suramangalam Road', start: '2026-09-15', end: '2026-09-20', duration: 6, priority: 'Low', closure: 'None', desc: 'Residential fiber rollout', status: 'Planned', idx: 2 },
+  { agency: 'Electricity Board', type: 'Electricity', road: 'Kondalampatti Road', start: '2026-09-22', end: '2026-09-28', duration: 7, priority: 'Normal', closure: 'Partial', desc: 'Industrial zone power upgrade', status: 'Planned', idx: 2 },
+  { agency: 'Sewerage Department', type: 'Sewerage', road: 'Five Roads Junction', start: '2026-09-18', end: '2026-09-24', duration: 7, priority: 'Normal', closure: 'Partial', desc: 'Sewer connection at junction', status: 'Planned', idx: 3 },
+  { agency: 'Municipal Drainage Division', type: 'Drainage', road: 'Alagapuram Road', start: '2026-09-20', end: '2026-09-26', duration: 7, priority: 'Normal', closure: 'Partial', desc: 'Side drain clearing', status: 'Planned', idx: 2 },
+  { agency: 'Road Development Department', type: 'Road Resurfacing', road: 'Sarada College Road', start: '2026-10-01', end: '2026-10-08', duration: 8, priority: 'Normal', closure: 'Full', desc: 'College road resurfacing', status: 'Planned', idx: 2 }
+];
+
+works.forEach(w => {
+  const coords = ROAD_COORDS[w.road];
+  const pos = offsetCoord(coords, w.idx);
+  insertWork.run(
+    agencyMap[w.agency], w.type, w.road, coords.segment,
+    w.start, w.end, w.duration, w.priority, w.closure,
+    w.desc, w.status, pos.lat, pos.lng
+  );
+});
+
+const insertHistory = db.prepare(`
+  INSERT INTO road_history (road_name, work_type, agency, start_date, end_date, status, description)
+  VALUES (?, ?, ?, ?, ?, ?, ?)
+`);
+
+const history = [
+  { road: 'MG Road', type: 'Telecom', agency: 'City Telecom Division', start: '2026-01-10', end: '2026-01-15', desc: 'Telecom excavation — fiber upgrade' },
+  { road: 'MG Road', type: 'Water', agency: 'Salem Water Department', start: '2026-03-05', end: '2026-03-12', desc: 'Water pipeline work' },
+  { road: 'MG Road', type: 'Road Resurfacing', agency: 'Road Development Department', start: '2026-05-01', end: '2026-05-08', desc: 'Road resurfacing' },
+  { road: 'MG Road', type: 'Electricity', agency: 'Electricity Board', start: '2026-06-10', end: '2026-06-15', desc: 'Electricity work — cable replacement' },
+  { road: 'Anna Salai', type: 'Sewerage', agency: 'Sewerage Department', start: '2026-02-01', end: '2026-02-08', desc: 'Sewer line repair' },
+  { road: 'Anna Salai', type: 'Drainage', agency: 'Municipal Drainage Division', start: '2026-04-15', end: '2026-04-20', desc: 'Drainage improvement' },
+  { road: 'Five Roads Junction', type: 'Road Resurfacing', agency: 'Road Development Department', start: '2026-01-20', end: '2026-01-28', desc: 'Junction resurfacing' },
+  { road: 'Sarada College Road', type: 'Water', agency: 'Salem Water Department', start: '2026-03-10', end: '2026-03-15', desc: 'Water main repair' },
+  { road: 'Omalur Main Road', type: 'Electricity', agency: 'Electricity Board', start: '2026-02-15', end: '2026-02-22', desc: 'Power line work' },
+  { road: 'Trichy Main Road', type: 'Drainage', agency: 'Municipal Drainage Division', start: '2026-05-10', end: '2026-05-17', desc: 'Drainage channel work' },
+  { road: 'Gugai Road', type: 'Telecom', agency: 'City Telecom Division', start: '2026-04-01', end: '2026-04-06', desc: 'Telecom duct installation' },
+  { road: 'Suramangalam Road', type: 'Sewerage', agency: 'Sewerage Department', start: '2026-06-01', end: '2026-06-07', desc: 'Sewer rehabilitation' },
+  { road: 'Fairlands Road', type: 'Water', agency: 'Salem Water Department', start: '2026-07-01', end: '2026-07-06', desc: 'Water connection work' },
+  { road: 'Hasthampatti Road', type: 'Electricity', agency: 'Electricity Board', start: '2026-05-20', end: '2026-05-25', desc: 'Power supply upgrade' },
+  { road: 'Kondalampatti Road', type: 'Drainage', agency: 'Municipal Drainage Division', start: '2026-06-15', end: '2026-06-22', desc: 'Industrial drainage' }
+];
+
+history.forEach(h => {
+  insertHistory.run(h.road, h.type, h.agency, h.start, h.end, 'Completed', h.desc);
+});
+
+console.log(`Seeded ${agencies.length} agencies, ${works.length} works, ${history.length} road history records.`);
