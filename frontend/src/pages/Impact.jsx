@@ -67,7 +67,7 @@ export default function Impact() {
         </div>
       </div>
 
-      <div className="card" style={{ marginTop: 20 }}>
+      {/* <div className="card" style={{ marginTop: 20 }}>
         <div className="card-title">TrenchSync Impact Summary</div>
         <div style={{ fontSize: '0.9rem', lineHeight: 1.8, color: 'var(--text-secondary)' }}>
           <p>TrenchSync identifies <strong style={{ color: 'var(--text-primary)' }}>{stats.conflicts_detected} spatial-temporal conflicts</strong> across the demo dataset, converting {stats.coordination_opportunities} into coordination opportunities through rule-based analysis.</p>
@@ -76,7 +76,7 @@ export default function Impact() {
             All metrics above are from synthetic demo data for prototype demonstration purposes.
           </p>
         </div>
-      </div>
+      </div> */}
     </div>
   );
 }

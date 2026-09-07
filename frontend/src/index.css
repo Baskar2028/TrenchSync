@@ -407,3 +407,14 @@ input, select, textarea {
   .main-content { margin-left: 0; padding: 20px; }
   .form-row, .grid-2 { grid-template-columns: 1fr; }
 }
+/* Dropdown option visibility */
+.form-group select option {
+  background: #1a1a22;
+  color: #e8e8ec;
+}
+
+.form-group select option:checked,
+.form-group select option:hover {
+  
+  color: #ffffff;
+}
